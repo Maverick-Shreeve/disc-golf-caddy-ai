@@ -11,9 +11,8 @@ type Round = {
   user_id: string;
   course_name: string;
   layout_name?: string | null;
-  date_played?: string;
-  start_time?: string;
-  end_time?: string;
+  start_time?: string | null;
+  end_time?: string | null;
   source: string;
   created_at: string;
 };
@@ -29,6 +28,9 @@ export default function HomePage() {
   const [udiscPlayerName, setUdiscPlayerName] = useState('');
   const [udiscLoading, setUdiscLoading] = useState(false);
   const [udiscMessage, setUdiscMessage] = useState<string | null>(null);
+
+  // Controls whether the “previously played courses” dropdown is visible
+  const [showCourseSuggestions, setShowCourseSuggestions] = useState(false);
 
   const loadRounds = async () => {
     try {
@@ -70,6 +72,7 @@ export default function HomePage() {
         return;
       }
       setCourseName('');
+      setShowCourseSuggestions(false);
       await loadRounds();
     } catch (err) {
       console.error(err);
@@ -141,37 +144,118 @@ export default function HomePage() {
     loadRounds();
   }, []);
 
+  // === Local course autocomplete based on previously played rounds ===
+  const normalizedQuery = courseName.trim().toLowerCase();
+
+  // Unique list of course names from existing rounds
+  const localCourseSuggestions =
+    normalizedQuery.length === 0
+      ? []
+      : Array.from(
+          new Set(
+            rounds
+              .map((r) => r.course_name)
+              .filter(Boolean) as string[]
+          )
+        )
+          .filter((name) =>
+            name.toLowerCase().includes(normalizedQuery)
+          )
+          .slice(0, 8); // cap to 8 suggestions
+
+  const handleCourseSuggestionClick = (name: string) => {
+    setCourseName(name);
+    // Hide suggestions after selecting one
+    setShowCourseSuggestions(false);
+  };
+
+  const handleCourseInputChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    setCourseName(e.target.value);
+    // Show suggestions when the user is typing
+    setShowCourseSuggestions(true);
+  };
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-slate-50">
       <div className="w-full max-w-xl px-4 py-8 space-y-8">
-        <header className="text-center">
-          <h1 className="text-3xl md:text-4xl font-bold mb-3">
-            Disc Golf Caddy AI
-          </h1>
-          <p className="text-slate-300 text-sm">
-            Log rounds manually or import from UDisc. Later, we&apos;ll use
-            this data to power personalized AI caddy recommendations.
-          </p>
+        {/* Header + nav */}
+        <header className="flex items-center justify-between mb-2">
+          <div className="text-center flex-1">
+            <h1 className="text-3xl md:text-4xl font-bold mb-1">
+              Disc Golf Caddy AI
+            </h1>
+            <p className="text-slate-300 text-sm">
+              Log rounds manually, import from UDisc, and later we&apos;ll use
+              this data to power personalized AI caddy recommendations and
+              insights.
+            </p>
+          </div>
+          <div className="ml-4 hidden sm:flex">
+            <Link
+              href="/bag"
+              className="text-xs px-3 py-1 rounded border border-slate-700 hover:bg-slate-800"
+            >
+              Manage bag
+            </Link>
+          </div>
         </header>
+
+        {/* On mobile, show the bag link below header */}
+        <div className="sm:hidden flex justify-center">
+          <Link
+            href="/bag"
+            className="text-xs px-3 py-1 rounded border border-slate-700 hover:bg-slate-800"
+          >
+            Manage bag
+          </Link>
+        </div>
 
         {/* Manual round create */}
         <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
           <h2 className="text-sm font-semibold mb-3">Add Round Manually</h2>
           <form
             onSubmit={handleAddRound}
-            className="flex flex-col sm:flex-row gap-3 mb-2"
+            className="flex flex-col gap-3 mb-2"
           >
-            <input
-              type="text"
-              value={courseName}
-              onChange={(e) => setCourseName(e.target.value)}
-              placeholder="Course name (e.g. Milo McIver)"
-              className="flex-1 rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={courseName}
+                onChange={handleCourseInputChange}
+                placeholder="Course name (e.g. The Ranch Frisbee Golf Course)"
+                className="w-full rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+
+              {/* Local suggestions dropdown (based on previously played courses) */}
+              {showCourseSuggestions &&
+                normalizedQuery.length > 0 &&
+                localCourseSuggestions.length > 0 && (
+                  <div className="absolute z-20 mt-1 w-full rounded-md border border-slate-700 bg-slate-950 text-xs shadow-lg max-h-60 overflow-auto">
+                    <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
+                      Previously played courses
+                    </div>
+                    {localCourseSuggestions.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => handleCourseSuggestionClick(name)}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-800"
+                      >
+                        <div className="font-medium text-slate-100">
+                          {name}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+            </div>
+
             <button
               type="submit"
               disabled={loading || !courseName.trim()}
-              className="rounded-md px-4 py-2 bg-emerald-500 text-slate-950 text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="self-start rounded-md px-4 py-2 bg-emerald-500 text-slate-950 text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Add Round
             </button>
@@ -273,8 +357,10 @@ export default function HomePage() {
                     {r.layout_name ? ` – ${r.layout_name}` : ''}
                   </span>
                   <span className="text-xs text-slate-500">
-                    {r.source === 'udisc' ? 'Imported from UDisc' : 'Manual'} ·{' '}
-                    {new Date(r.created_at).toLocaleDateString()}
+                    {r.source === 'udisc'
+                      ? 'Imported from UDisc'
+                      : 'Manual'}{' '}
+                    · {new Date(r.created_at).toLocaleDateString()}
                   </span>
                 </Link>
               </li>
