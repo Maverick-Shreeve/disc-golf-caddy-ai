@@ -20,7 +20,7 @@ type Disc = {
 };
 
 type UserDisc = {
-  id: string; 
+  id: string;
   user_id: string;
   disc_id: string;
   nickname: string | null;
@@ -40,9 +40,20 @@ export default function BagPage() {
   const [nickname, setNickname] = useState('');
   const [wearLevel, setWearLevel] = useState('seasoned');
 
-  const loadDiscs = async () => {
+  // Catalog search state
+  const [search, setSearch] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  const loadDiscs = async (query?: string) => {
     try {
-      const res = await fetch('/api/discs');
+      setSearchLoading(true);
+      setError(null);
+
+      const params = query && query.trim()
+        ? `?q=${encodeURIComponent(query.trim())}`
+        : '';
+
+      const res = await fetch(`/api/discs${params}`);
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || 'Failed to load disc catalog');
@@ -52,6 +63,8 @@ export default function BagPage() {
     } catch (err) {
       console.error(err);
       setError('Unexpected error loading disc catalog');
+    } finally {
+      setSearchLoading(false);
     }
   };
 
@@ -138,8 +151,18 @@ export default function BagPage() {
     }
   };
 
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await loadDiscs(search);
+  };
+
+  const handleClearSearch = async () => {
+    setSearch('');
+    await loadDiscs(); // reload full catalog
+  };
+
   useEffect(() => {
-    // Load both catalog + bag on page load
+    // Load full catalog + bag on page load
     loadDiscs();
     loadBag();
   }, []);
@@ -172,8 +195,47 @@ export default function BagPage() {
         )}
 
         {/* Add disc to bag */}
-        <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+        <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-4">
           <h2 className="text-sm font-semibold">Add disc to bag</h2>
+
+          {/* Search catalog controls */}
+          <form
+            onSubmit={handleSearch}
+            className="flex flex-col md:flex-row gap-2 md:items-end"
+          >
+            <div className="flex-1 flex flex-col gap-1">
+              <label className="text-[11px] text-slate-300">
+                Search catalog (brand or mold)
+              </label>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="e.g. Buzzz, Destroyer, Judge..."
+                className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={searchLoading}
+                className="rounded-md px-4 py-2 bg-slate-800 text-xs border border-slate-600 hover:bg-slate-700 disabled:opacity-50"
+              >
+                {searchLoading ? 'Searching…' : 'Search'}
+              </button>
+              {search && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="rounded-md px-3 py-2 bg-slate-900 text-xs border border-slate-700 hover:bg-slate-800"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </form>
+
+          {/* Add-to-bag form */}
           <form
             onSubmit={handleAddToBag}
             className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end"
@@ -187,7 +249,13 @@ export default function BagPage() {
                 onChange={(e) => setSelectedDiscId(e.target.value)}
                 className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="">Select a disc…</option>
+                <option value="">
+                  {searchLoading
+                    ? 'Loading discs…'
+                    : discs.length === 0
+                    ? 'No discs match your search'
+                    : 'Select a disc…'}
+                </option>
                 {discs.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.brand} {d.mold} {d.plastic ? `(${d.plastic})` : ''} ·{' '}

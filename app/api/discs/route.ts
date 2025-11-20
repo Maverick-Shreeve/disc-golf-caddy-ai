@@ -16,18 +16,20 @@ type Disc = {
 };
 
 export async function GET(req: NextRequest) {
-  const q = (req.nextUrl.searchParams.get('q') || '').trim().toLowerCase();
+  const rawQ = req.nextUrl.searchParams.get('q') || '';
+  const q = rawQ.trim();
 
-  // Base query
   let query = supabaseServer
     .from('discs')
     .select('*')
     .order('brand', { ascending: true })
     .order('mold', { ascending: true });
 
-  // Optional simple search 
   if (q) {
-    query = query.ilike('brand', `%${q}%`).ilike('mold', `%${q}%`);
+    const pattern = `%${q}%`;
+    query = query.or(
+      `brand.ilike.${pattern},mold.ilike.${pattern}`
+    );
   }
 
   const { data, error } = await query;
@@ -41,6 +43,5 @@ export async function GET(req: NextRequest) {
   }
 
   const discs = (data ?? []) as Disc[];
-
   return NextResponse.json({ discs });
 }
