@@ -56,7 +56,7 @@ export default function BagPage() {
   const [search, setSearch] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
 
-  // rapidapi results
+  // api results
   const [externalResults, setExternalResults] = useState<ExternalDisc[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
   const [externalError, setExternalError] = useState<string | null>(null);
@@ -198,7 +198,7 @@ export default function BagPage() {
       const local = (localData.discs || []) as Disc[];
       setLocalDiscs(local);
 
-      // if  no matches, fall back to rapidapi
+      // if  no matches, fall back to api
       if (local.length === 0) {
         setExternalLoading(true);
         const extRes = await fetch(
@@ -236,7 +236,7 @@ export default function BagPage() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/bag/add-from-external', {
+      const res = await fetch('/api/bag/add-from-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -337,7 +337,7 @@ export default function BagPage() {
             </div>
           </form>
 
-          {/* Status line */}
+          {/* status lines */}
           <div className="text-[11px] text-slate-400">
             {searchLoading || externalLoading
               ? 'Searching discs…'
@@ -350,7 +350,7 @@ export default function BagPage() {
               : 'No discs found for that search.'}
           </div>
 
-          {/* Add-to-bag form */}
+          {/* add to bag form */}
           {localCount > 0 && (
             <form
               onSubmit={handleAddToBag}
@@ -417,7 +417,7 @@ export default function BagPage() {
             </form>
           )}
 
-          {/* External results list (when no local matches) */}
+          {/* api results list (when no local matches) */}
           {externalCount > 0 && localCount === 0 && (
             <div className="space-y-2 max-h-64 overflow-y-auto border border-slate-800 rounded-md p-2 bg-slate-950/40 mt-2">
               {externalResults.map((d) => (

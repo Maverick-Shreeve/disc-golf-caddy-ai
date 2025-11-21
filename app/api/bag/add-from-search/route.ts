@@ -15,6 +15,13 @@ type ExternalDisc = {
   stability: string | null;
 };
 
+function toIntOrNull(v: number | null): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  if (Number.isNaN(n)) return null;
+  return Math.round(n); // safe for integer columns
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
 
@@ -40,7 +47,7 @@ export async function POST(req: NextRequest) {
   }
 
   const {
-    externalId,
+    externalId, // currently unused, but we may add a column later
     brand,
     mold,
     plastic,
@@ -60,46 +67,53 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // 1) Try to find an existing disc row that matches closely
+    // 1) Try to find an existing disc with same brand + mold
     const { data: existing, error: existingError } = await supabaseServer
       .from('discs')
       .select(
-        'id, brand, mold, plastic, type, speed, glide, turn, fade, stability, external_id'
+        'id, brand, mold, plastic, type, speed, glide, turn, fade, stability'
       )
       .eq('brand', brand)
       .eq('mold', mold)
       .maybeSingle();
 
     if (existingError && existingError.code !== 'PGRST116') {
-      // PGRST116 = No rows found. Other errors we log.
       console.error('Error checking discs table', existingError);
     }
 
     let discId: string | null = existing?.id ?? null;
 
-    // 2) If not found, insert new disc in discs
+    // 2) If not found, insert new disc
     if (!discId) {
+      const insertPayload: any = {
+        brand,
+        mold,
+        plastic,
+        type,
+        // If your columns are INTEGER in Postgres/Supabase, this keeps them valid:
+        speed: toIntOrNull(speed),
+        glide: toIntOrNull(glide),
+        turn: toIntOrNull(turn),
+        fade: toIntOrNull(fade),
+        stability,
+      };
+
       const { data: inserted, error: insertError } = await supabaseServer
         .from('discs')
-        .insert({
-          brand,
-          mold,
-          plastic,
-          type,
-          speed,
-          glide,
-          turn,
-          fade,
-          stability,
-          external_id: externalId ?? null,
-        })
+        .insert(insertPayload)
         .select('id')
         .single();
 
       if (insertError) {
-        console.error('Error inserting new disc from external', insertError);
+        console.error(
+          'Error inserting new disc from external',
+          insertError
+        );
         return NextResponse.json(
-          { error: 'Error saving disc from external source' },
+          {
+            error: 'Error saving disc from external source',
+            details: insertError.message ?? String(insertError),
+          },
           { status: 500 }
         );
       }
@@ -140,7 +154,7 @@ export async function POST(req: NextRequest) {
       discId,
     });
   } catch (err) {
-    console.error('Unhandled error in POST /api/bag/add-from-external', err);
+    console.error('Unhandled error in POST /api/bag/add-from-search', err);
     return NextResponse.json(
       {
         error: 'Unexpected server error while adding external disc to bag',

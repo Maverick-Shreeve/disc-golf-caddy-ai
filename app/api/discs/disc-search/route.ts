@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-//return to frontend
 type ExternalDisc = {
   externalId: string;
   brand: string;
@@ -14,17 +13,35 @@ type ExternalDisc = {
   stability: string | null;
 };
 
-function getEnv(name: string): string {
-  const value = process.env[name];
-  if (!value || value.trim() === '') {
-    throw new Error(`[external discs] Missing env var: ${name}`);
-  }
-  return value;
+// DiscIt public base URL
+const DISCIT_BASE_URL =
+  process.env.DISCIT_BASE_URL || 'https://discit-api.fly.dev';
+
+function slugifyForDiscIt(q: string): string {
+  return q
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '') 
+    .replace(/\s+/g, '-'); 
 }
 
-const BASE_URL = getEnv('RAPIDAPI_DISCS_BASE_URL');
-const API_KEY = getEnv('RAPIDAPI_DISCS_API_KEY');
-const API_HOST = getEnv('RAPIDAPI_DISCS_HOST');
+function normalizeType(category: string | null | undefined): string | null {
+  if (!category) return null;
+  const c = category.toLowerCase();
+
+  if (c.includes('putter')) return 'putter';
+  if (c.includes('mid')) return 'midrange';
+  if (c.includes('fairway')) return 'fairway';
+  if (c.includes('driver') || c.includes('distance')) return 'distance';
+
+  return category;
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isNaN(n) ? null : n;
+}
 
 export async function GET(req: NextRequest) {
   const rawQ = req.nextUrl.searchParams.get('q') ?? '';
@@ -34,22 +51,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ discs: [] });
   }
 
-  try {
-    const url = `${BASE_URL}/discs?limit=20&offset=0&search=${encodeURIComponent(
-      q
-    )}`;
+  const slug = slugifyForDiscIt(q);
 
-    const apiRes = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'x-rapidapi-key': API_KEY,
-        'x-rapidapi-host': API_HOST,
-      },
-    });
+  try {
+    // DiscIt: GET /disc?name=<slug>
+    const url = `${DISCIT_BASE_URL}/disc?name=${encodeURIComponent(slug)}`;
+    const apiRes = await fetch(url, { method: 'GET' });
 
     if (!apiRes.ok) {
       const text = await apiRes.text().catch(() => '');
-      console.error('RapidAPI discs error', apiRes.status, text);
+      console.error('DiscIt API error', apiRes.status, text);
       return NextResponse.json(
         {
           error: 'Error searching external disc database',
@@ -64,49 +75,34 @@ export async function GET(req: NextRequest) {
 
     const rawList: any[] = Array.isArray(json)
       ? json
-      : Array.isArray(json.discs)
-      ? json.discs
+      : Array.isArray((json as any).discs)
+      ? (json as any).discs
       : [];
 
-    const discs: ExternalDisc[] = rawList.map((d: any): ExternalDisc => {
-      const brand = d.brand || d.manufacturer || '';
-      const mold = d.mold || d.name || '';
-      const plastic = d.plastic || null;
-      const type = d.type || d.disc_type || null;
+    const discs: ExternalDisc[] = rawList
+      .map((d: any): ExternalDisc | null => {
+        const brand = d.brand ?? '';
+        const mold = d.name ?? '';
+        if (!brand || !mold) return null;
 
-      return {
-        externalId: String(d.id ?? `${brand}-${mold}`),
-        brand,
-        mold,
-        plastic,
-        type,
-        speed:
-          typeof d.speed === 'number'
-            ? d.speed
-            : d.speed
-            ? Number(d.speed) || null
+        const category = d.category ?? null;
+
+        return {
+          externalId: String(d.id ?? `${brand}-${mold}`),
+          brand,
+          mold,
+          plastic: null, // DiscIt doesn't expose plastic
+          type: normalizeType(category),
+          speed: toNumberOrNull(d.speed),
+          glide: toNumberOrNull(d.glide),
+          turn: toNumberOrNull(d.turn),
+          fade: toNumberOrNull(d.fade),
+          stability: typeof d.stability === 'string'
+            ? d.stability.toLowerCase()
             : null,
-        glide:
-          typeof d.glide === 'number'
-            ? d.glide
-            : d.glide
-            ? Number(d.glide) || null
-            : null,
-        turn:
-          typeof d.turn === 'number'
-            ? d.turn
-            : d.turn
-            ? Number(d.turn) || null
-            : null,
-        fade:
-          typeof d.fade === 'number'
-            ? d.fade
-            : d.fade
-            ? Number(d.fade) || null
-            : null,
-        stability: (d.stability as string) ?? null,
-      };
-    });
+        };
+      })
+      .filter(Boolean) as ExternalDisc[];
 
     return NextResponse.json({ discs });
   } catch (err) {
