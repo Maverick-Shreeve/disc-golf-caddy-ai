@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+//return to frontend
 type ExternalDisc = {
   externalId: string;
   brand: string;
@@ -21,119 +22,98 @@ function getEnv(name: string): string {
   return value;
 }
 
-const RAPIDAPI_BASE_URL = getEnv('RAPIDAPI_DISCS_BASE_URL');
-const RAPIDAPI_KEY = getEnv('RAPIDAPI_DISCS_KEY');
-const RAPIDAPI_HOST = getEnv('RAPIDAPI_DISCS_HOST');
+const BASE_URL = getEnv('RAPIDAPI_DISCS_BASE_URL');
+const API_KEY = getEnv('RAPIDAPI_DISCS_API_KEY');
+const API_HOST = getEnv('RAPIDAPI_DISCS_HOST');
 
 export async function GET(req: NextRequest) {
-  const rawQ = req.nextUrl.searchParams.get('q') || '';
+  const rawQ = req.nextUrl.searchParams.get('q') ?? '';
   const q = rawQ.trim();
 
-  // Avoid hammering the API with one-letter searches
   if (!q || q.length < 2) {
     return NextResponse.json({ discs: [] });
   }
 
   try {
-    // Build URL for RapidAPI call
-    // Their sample: /discs?limit=50&offset=50
-    // Here we start at offset 0 and add a search param.
-    // You may need to tweak the param name (e.g. 'name', 'search') to match their docs.
-    const url = new URL('/discs', RAPIDAPI_BASE_URL);
-    url.searchParams.set('limit', '50');
-    url.searchParams.set('offset', '0');
+    const url = `${BASE_URL}/discs?limit=20&offset=0&search=${encodeURIComponent(
+      q
+    )}`;
 
-    // If the API supports searching, adjust this key to whatever they expect:
-    // e.g. url.searchParams.set('search', q) or url.searchParams.set('name', q)
-    url.searchParams.set('search', q);
-
-    const res = await fetch(url.toString(), {
+    const apiRes = await fetch(url, {
       method: 'GET',
       headers: {
-        'x-rapidapi-key': RAPIDAPI_KEY,
-        'x-rapidapi-host': RAPIDAPI_HOST,
+        'x-rapidapi-key': API_KEY,
+        'x-rapidapi-host': API_HOST,
       },
     });
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.error('RapidAPI disc error', res.status, text.slice(0, 300));
+    if (!apiRes.ok) {
+      const text = await apiRes.text().catch(() => '');
+      console.error('RapidAPI discs error', apiRes.status, text);
       return NextResponse.json(
         {
-          error: 'Error calling external disc API',
-          status: res.status,
-          details: text.slice(0, 300),
+          error: 'Error searching external disc database',
+          status: apiRes.status,
+          details: text.slice(0, 500),
         },
         { status: 502 }
       );
     }
 
-    const raw = (await res.json()) as any;
+    const json = await apiRes.json();
 
-    const items: any[] = Array.isArray(raw)
-      ? raw
-      : Array.isArray(raw.discs)
-      ? raw.discs
-      : Array.isArray(raw.results)
-      ? raw.results
+    const rawList: any[] = Array.isArray(json)
+      ? json
+      : Array.isArray(json.discs)
+      ? json.discs
       : [];
 
-    const discs: ExternalDisc[] = items.map((item: any) => ({
-      externalId: String(
-        item.id ??
-          item.pdga_id ??
-          item.slug ??
-          item.uuid ??
-          item.code ??
-          ''
-      ),
-      brand:
-        item.brand ??
-        item.manufacturer ??
-        item.maker ??
-        'Unknown',
-      mold:
-        item.mold ??
-        item.name ??
-        item.model ??
-        'Unknown',
-      plastic:
-        item.plastic ??
-        item.plastic_type ??
-        null,
-      type:
-        item.type ??
-        item.disc_type ??
-        item.category ??
-        null,
-      speed:
-        typeof item.speed === 'number'
-          ? item.speed
-          : Number(item.speed) || null,
-      glide:
-        typeof item.glide === 'number'
-          ? item.glide
-          : Number(item.glide) || null,
-      turn:
-        typeof item.turn === 'number'
-          ? item.turn
-          : Number(item.turn) || null,
-      fade:
-        typeof item.fade === 'number'
-          ? item.fade
-          : Number(item.fade) || null,
-      stability:
-        item.stability ??
-        item.stability_class ??
-        null,
-    }));
+    const discs: ExternalDisc[] = rawList.map((d: any): ExternalDisc => {
+      const brand = d.brand || d.manufacturer || '';
+      const mold = d.mold || d.name || '';
+      const plastic = d.plastic || null;
+      const type = d.type || d.disc_type || null;
+
+      return {
+        externalId: String(d.id ?? `${brand}-${mold}`),
+        brand,
+        mold,
+        plastic,
+        type,
+        speed:
+          typeof d.speed === 'number'
+            ? d.speed
+            : d.speed
+            ? Number(d.speed) || null
+            : null,
+        glide:
+          typeof d.glide === 'number'
+            ? d.glide
+            : d.glide
+            ? Number(d.glide) || null
+            : null,
+        turn:
+          typeof d.turn === 'number'
+            ? d.turn
+            : d.turn
+            ? Number(d.turn) || null
+            : null,
+        fade:
+          typeof d.fade === 'number'
+            ? d.fade
+            : d.fade
+            ? Number(d.fade) || null
+            : null,
+        stability: (d.stability as string) ?? null,
+      };
+    });
 
     return NextResponse.json({ discs });
   } catch (err) {
-    console.error('Unhandled error in /api/discs/external-search', err);
+    console.error('Unhandled error in GET /api/discs/disc-search', err);
     return NextResponse.json(
       {
-        error: 'Unexpected server error while searching external disc API',
+        error: 'Unexpected server error while searching discs',
         details: String((err as any)?.message ?? err),
       },
       { status: 500 }
