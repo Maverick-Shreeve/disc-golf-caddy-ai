@@ -1,4 +1,3 @@
-// app/api/bag/add-from-external/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabaseServer';
 
@@ -15,13 +14,6 @@ type ExternalDisc = {
   stability: string | null;
 };
 
-function toIntOrNull(v: number | null): number | null {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  if (Number.isNaN(n)) return null;
-  return Math.round(n); // safe for integer columns
-}
-
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
 
@@ -32,11 +24,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { userId, disc, nickname, wearLevel } = body as {
+  const { userId, disc, nickname, wearLevel, weight_grams } = body as {
     userId?: string;
     disc?: ExternalDisc;
     nickname?: string | null;
     wearLevel?: string | null;
+    weight_grams?: number | null;
   };
 
   if (!userId || !disc) {
@@ -47,7 +40,7 @@ export async function POST(req: NextRequest) {
   }
 
   const {
-    externalId, // currently unused, but we may add a column later
+    externalId,
     brand,
     mold,
     plastic,
@@ -67,11 +60,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // 1) Try to find an existing disc with same brand + mold
     const { data: existing, error: existingError } = await supabaseServer
       .from('discs')
       .select(
-        'id, brand, mold, plastic, type, speed, glide, turn, fade, stability'
+        'id, brand, mold, plastic, type, speed, glide, turn, fade, stability, external_id'
       )
       .eq('brand', brand)
       .eq('mold', mold)
@@ -83,37 +75,29 @@ export async function POST(req: NextRequest) {
 
     let discId: string | null = existing?.id ?? null;
 
-    // 2) If not found, insert new disc
+    // 2) If not found, insert new disc in discs
     if (!discId) {
-      const insertPayload: any = {
-        brand,
-        mold,
-        plastic,
-        type,
-        // If your columns are INTEGER in Postgres/Supabase, this keeps them valid:
-        speed: toIntOrNull(speed),
-        glide: toIntOrNull(glide),
-        turn: toIntOrNull(turn),
-        fade: toIntOrNull(fade),
-        stability,
-      };
-
       const { data: inserted, error: insertError } = await supabaseServer
         .from('discs')
-        .insert(insertPayload)
+        .insert({
+          brand,
+          mold,
+          plastic,
+          type,
+          speed,
+          glide,
+          turn,
+          fade,
+          stability,
+          external_id: externalId ?? null,
+        })
         .select('id')
         .single();
 
       if (insertError) {
-        console.error(
-          'Error inserting new disc from external',
-          insertError
-        );
+        console.error('Error inserting new disc from external', insertError);
         return NextResponse.json(
-          {
-            error: 'Error saving disc from external source',
-            details: insertError.message ?? String(insertError),
-          },
+          { error: 'Error saving disc from external source' },
           { status: 500 }
         );
       }
@@ -128,15 +112,48 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3) Insert into user_discs
+    // duplicate check 
+    const { data: existingUserDisc, error: existingUserDiscError } =
+      await supabaseServer
+        .from('user_discs')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('disc_id', discId)
+        .eq('in_bag', true)
+        .maybeSingle();
+
+    if (
+      existingUserDiscError &&
+      existingUserDiscError.code !== 'PGRST116'
+    ) {
+      console.error(
+        'Error checking user_discs for duplicate',
+        existingUserDiscError
+      );
+    }
+
+    if (existingUserDisc) {
+      return NextResponse.json(
+        { error: 'That disc is already in your bag.' },
+        { status: 400 }
+      );
+    }
+
+    const cleanWeight =
+      typeof weight_grams === 'number' && !Number.isNaN(weight_grams)
+        ? weight_grams
+        : null;
+
+    // 4) Insert into user_discs
     const { data: userDiscRow, error: userDiscError } = await supabaseServer
       .from('user_discs')
       .insert({
         user_id: userId,
         disc_id: discId,
         nickname: nickname ?? null,
-        wear_level: wearLevel ?? 'new',
+        wear_level: wearLevel ?? null,
         in_bag: true,
+        weight_grams: cleanWeight,
       })
       .select('id')
       .single();

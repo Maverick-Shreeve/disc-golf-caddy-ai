@@ -41,12 +41,15 @@ type UserDisc = {
   in_bag: boolean;
   created_at: string;
   disc: Disc;
-  // New optional weight field (matches user_discs.weight_grams)
+  // optional weight field 
   weight_grams?: number | null;
 };
 
 export default function BagPage() {
   const [localDiscs, setLocalDiscs] = useState<Disc[]>([]);
+  // last 5 created in discs table
+  const [recentCatalogDiscs, setRecentCatalogDiscs] = useState<Disc[]>([]);
+
   const [bag, setBag] = useState<UserDisc[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,9 +59,7 @@ export default function BagPage() {
     useState<ExternalDisc | null>(null);
 
   const [nickname, setNickname] = useState('');
-  // Wear level is now optional: start as empty string
   const [wearLevel, setWearLevel] = useState('');
-  // New optional weight (in grams) as a text input
   const [weight, setWeight] = useState('');
 
   // Search state
@@ -70,7 +71,6 @@ export default function BagPage() {
   const [externalError, setExternalError] = useState<string | null>(null);
 
   const [hasSearched, setHasSearched] = useState(false);
-
   const [searchFocused, setSearchFocused] = useState(false);
 
   const loadBag = async () => {
@@ -89,6 +89,21 @@ export default function BagPage() {
       setError('Unexpected error loading bag');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // load last 5 discs from discs table 
+  const loadRecentDiscs = async () => {
+    try {
+      const res = await fetch('/api/discs?recent=1');
+      const data = await res.json();
+      if (!res.ok) {
+        console.error(data.error || 'Failed to load recent discs');
+        return;
+      }
+      setRecentCatalogDiscs(data.discs || []);
+    } catch (err) {
+      console.error('Unexpected error loading recent discs', err);
     }
   };
 
@@ -158,7 +173,7 @@ export default function BagPage() {
     setSelectedDiscId('');
     setSelectedExternalDisc(null);
     setLocalDiscs([]);
-    // you can call loadInitialDiscs() here if you ever want a default list
+    // Could call loadRecentDiscs() here if we want to refresh "recent"
   };
 
   // Single "Add to bag" handler that works for either a local or external disc
@@ -190,7 +205,6 @@ export default function BagPage() {
             discId: selectedDiscId,
             nickname: nickname.trim() || null,
             wearLevel: wearLevel || null,
-            // new field we send to the API
             weight_grams: Number.isNaN(weightGrams) ? null : weightGrams,
           }),
         });
@@ -200,7 +214,7 @@ export default function BagPage() {
           return;
         }
       } else if (hasExternal && selectedExternalDisc) {
-        // External disc (DiscIt): POST /api/bag/add-from-search
+        // External disc: POST /api/bag/add-from-search
         const res = await fetch('/api/bag/add-from-search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -209,7 +223,6 @@ export default function BagPage() {
             disc: selectedExternalDisc,
             nickname: nickname.trim() || null,
             wearLevel: wearLevel || null,
-            // new field we send to the API
             weight_grams: Number.isNaN(weightGrams) ? null : weightGrams,
           }),
         });
@@ -222,8 +235,8 @@ export default function BagPage() {
 
       // Reset and reload bag
       setNickname('');
-      setWearLevel('');     // optional wear -> reset to empty
-      setWeight('');        // reset weight input
+      setWearLevel('');
+      setWeight('');
       setSelectedDiscId('');
       setSelectedExternalDisc(null);
       await loadBag();
@@ -265,6 +278,7 @@ export default function BagPage() {
 
   useEffect(() => {
     loadBag();
+    loadRecentDiscs();
   }, []);
 
   const localCount = localDiscs.length;
@@ -273,23 +287,6 @@ export default function BagPage() {
   const selectedLocalDisc = selectedDiscId
     ? localDiscs.find((d) => d.id === selectedDiscId) ?? null
     : null;
-
-  // Last 5 unique discs added to the bag, by created_at desc
-  const recentDiscs: UserDisc[] = (() => {
-    if (!bag.length) return [];
-    const sorted = [...bag].sort((a, b) =>
-      a.created_at < b.created_at ? 1 : -1
-    );
-    const seen = new Set<string>();
-    const unique: UserDisc[] = [];
-    for (const item of sorted) {
-      if (seen.has(item.disc_id)) continue;
-      seen.add(item.disc_id);
-      unique.push(item);
-      if (unique.length >= 5) break;
-    }
-    return unique;
-  })();
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
@@ -344,38 +341,34 @@ export default function BagPage() {
               {searchFocused &&
                 !hasSearched &&
                 !search &&
-                recentDiscs.length > 0 && (
+                recentCatalogDiscs.length > 0 && (
                   <div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border border-slate-800 bg-slate-950/95 shadow-lg">
                     <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-slate-400">
                       Recent discs
                     </div>
                     <div className="max-h-52 overflow-y-auto text-xs">
-                      {recentDiscs.map((ud) => (
+                      {recentCatalogDiscs.map((d) => (
                         <button
-                          key={ud.id}
+                          key={d.id}
                           type="button"
                           onMouseDown={(e) => {
                             // prevent blur from firing before click
                             e.preventDefault();
-                            setSelectedDiscId(ud.disc.id);
+                            setSelectedDiscId(d.id);
                             setSelectedExternalDisc(null);
-                            setSearch(
-                              `${ud.disc.brand} ${ud.disc.mold}`
-                            );
+                            setSearch(`${d.brand} ${d.mold}`);
                             setHasSearched(false);
+                            setLocalDiscs([d]);
                           }}
                           className="w-full text-left px-3 py-2 hover:bg-slate-800 border-t border-slate-800 first:border-t-0"
                         >
                           <div className="text-slate-100">
-                            {ud.disc.brand} {ud.disc.mold}{' '}
-                            {ud.disc.plastic
-                              ? `(${ud.disc.plastic})`
-                              : ''}
+                            {d.brand} {d.mold}{' '}
+                            {d.plastic ? `(${d.plastic})` : ''}
                           </div>
                           <div className="text-[11px] text-slate-500">
-                            {ud.disc.type || 'Unknown type'} ·{' '}
-                            {ud.disc.speed}/{ud.disc.glide ?? '?'} /{' '}
-                            {ud.disc.turn ?? '?'} / {ud.disc.fade ?? '?'}
+                            {d.type || 'Unknown type'} · {d.speed} /{' '}
+                            {d.glide ?? '?'} / {d.turn ?? '?'} / {d.fade ?? '?'}
                           </div>
                         </button>
                       ))}

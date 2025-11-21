@@ -23,6 +23,7 @@ type UserDiscRow = {
   wear_level: string | null;
   in_bag: boolean;
   created_at: string;
+  weight_grams: number | null;
   disc: Disc;
 };
 
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabaseServer
     .from('user_discs')
     .select(
-      'id, user_id, disc_id, nickname, wear_level, in_bag, created_at, disc:discs(*)'
+      'id, user_id, disc_id, nickname, wear_level, in_bag, created_at, weight_grams, disc:discs(*)'
     )
     .eq('user_id', userId)
     .eq('in_bag', true)
@@ -53,37 +54,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const rawRows = (data ?? []) as any[];
-
-  // Normalize disc field (object vs array) and make it match UserDiscRow
-  const bag: UserDiscRow[] = rawRows.map((row) => {
-    const rawDisc = row.disc;
-
-    const disc: Disc | null = Array.isArray(rawDisc)
-      ? ((rawDisc[0] as Disc | undefined) ?? null)
-      : ((rawDisc as Disc | null) ?? null);
-
-    if (!disc) {
-      throw new Error('Missing joined disc row for user_discs entry');
-    }
-
-    return {
-      id: row.id as string,
-      user_id: row.user_id as string,
-      disc_id: row.disc_id as string,
-      nickname: (row.nickname ?? null) as string | null,
-      wear_level: (row.wear_level ?? null) as string | null,
-      in_bag: Boolean(row.in_bag),
-      created_at: row.created_at as string,
-      disc,
-    };
-  });
+  // Cast through unknown to satisfy TS (disc comes back as any[])
+  const bag = (data ?? []) as unknown as UserDiscRow[];
 
   return NextResponse.json({ bag });
 }
 
 // POST /api/bag
-// body: { userId, discId, nickname?, wearLevel? }
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
 
@@ -94,11 +71,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { userId, discId, nickname, wearLevel } = body as {
+  const {
+    userId,
+    discId,
+    nickname,
+    wearLevel,
+    weight_grams,
+  } = body as {
     userId?: string;
     discId?: string;
-    nickname?: string;
-    wearLevel?: string;
+    nickname?: string | null;
+    wearLevel?: string | null;
+    weight_grams?: number | null;
   };
 
   if (!userId || !discId) {
@@ -108,6 +92,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Duplicate check
+  const { data: existing, error: existingError } = await supabaseServer
+    .from('user_discs')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('disc_id', discId)
+    .eq('in_bag', true)
+    .maybeSingle();
+
+  if (existingError && existingError.code !== 'PGRST116') {
+    console.error('Error checking existing user_disc', existingError);
+  }
+
+  if (existing) {
+    return NextResponse.json(
+      { error: 'That disc is already in your bag.' },
+      { status: 400 }
+    );
+  }
+
+  const cleanWeight =
+    typeof weight_grams === 'number' && !Number.isNaN(weight_grams)
+      ? weight_grams
+      : null;
+
   const { data, error } = await supabaseServer
     .from('user_discs')
     .insert({
@@ -116,6 +125,7 @@ export async function POST(req: NextRequest) {
       nickname: nickname || null,
       wear_level: wearLevel || null,
       in_bag: true,
+      weight_grams: cleanWeight,
     })
     .select('id')
     .single();
@@ -131,6 +141,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ id: data?.id });
 }
 
+// DELETE /api/bag
 // body: { userDiscId, userId }
 export async function DELETE(req: NextRequest) {
   const body = await req.json().catch(() => null);
