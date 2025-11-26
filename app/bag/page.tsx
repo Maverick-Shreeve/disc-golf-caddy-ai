@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-
-const DEMO_USER_ID = '1deb1304-f95e-4951-bfc1-7fbbb5b83204';
+import type { User } from '@supabase/supabase-js';
+import { supabaseBrowser } from '@/lib/supabaseBrowser';
 
 type Disc = {
   id: string;
@@ -41,15 +41,15 @@ type UserDisc = {
   in_bag: boolean;
   created_at: string;
   disc: Disc;
-  // optional weight field 
+   // optional weight field 
   weight_grams?: number | null;
 };
 
 export default function BagPage() {
-  const [localDiscs, setLocalDiscs] = useState<Disc[]>([]);
-  // last 5 created in discs table
-  const [recentCatalogDiscs, setRecentCatalogDiscs] = useState<Disc[]>([]);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
+  const [localDiscs, setLocalDiscs] = useState<Disc[]>([]);
   const [bag, setBag] = useState<UserDisc[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,13 +71,29 @@ export default function BagPage() {
   const [externalError, setExternalError] = useState<string | null>(null);
 
   const [hasSearched, setHasSearched] = useState(false);
+
   const [searchFocused, setSearchFocused] = useState(false);
 
-  const loadBag = async () => {
+  // Load current auth user from Supabase on mount
+  useEffect(() => {
+    const loadUser = async () => {
+      setAuthLoading(true);
+      const { data, error } = await supabaseBrowser.auth.getUser();
+      if (error) {
+        console.error('Error loading auth user', error);
+      }
+      setAuthUser(data?.user ?? null);
+      setAuthLoading(false);
+    };
+
+    loadUser();
+  }, []);
+
+  const loadBag = async (userId: string) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`/api/bag?userId=${DEMO_USER_ID}`);
+      const res = await fetch(`/api/bag?userId=${userId}`);
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || 'Failed to load bag');
@@ -89,21 +105,6 @@ export default function BagPage() {
       setError('Unexpected error loading bag');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // load last 5 discs from discs table 
-  const loadRecentDiscs = async () => {
-    try {
-      const res = await fetch('/api/discs?recent=1');
-      const data = await res.json();
-      if (!res.ok) {
-        console.error(data.error || 'Failed to load recent discs');
-        return;
-      }
-      setRecentCatalogDiscs(data.discs || []);
-    } catch (err) {
-      console.error('Unexpected error loading recent discs', err);
     }
   };
 
@@ -173,12 +174,14 @@ export default function BagPage() {
     setSelectedDiscId('');
     setSelectedExternalDisc(null);
     setLocalDiscs([]);
-    // Could call loadRecentDiscs() here if we want to refresh "recent"
+    // you can call loadInitialDiscs() here if you ever want a default list
   };
 
   // Single "Add to bag" handler that works for either a local or external disc
   const handleAddSelectedDisc = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!authUser) return;
 
     const hasLocal = !!selectedDiscId;
     const hasExternal = !!selectedExternalDisc;
@@ -201,10 +204,11 @@ export default function BagPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userId: DEMO_USER_ID,
+            userId: authUser.id,
             discId: selectedDiscId,
             nickname: nickname.trim() || null,
             wearLevel: wearLevel || null,
+            // new field we send to the API
             weight_grams: Number.isNaN(weightGrams) ? null : weightGrams,
           }),
         });
@@ -214,12 +218,11 @@ export default function BagPage() {
           return;
         }
       } else if (hasExternal && selectedExternalDisc) {
-        // External disc: POST /api/bag/add-from-search
         const res = await fetch('/api/bag/add-from-search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userId: DEMO_USER_ID,
+            userId: authUser.id,
             disc: selectedExternalDisc,
             nickname: nickname.trim() || null,
             wearLevel: wearLevel || null,
@@ -236,10 +239,10 @@ export default function BagPage() {
       // Reset and reload bag
       setNickname('');
       setWearLevel('');
-      setWeight('');
+      setWeight(''); 
       setSelectedDiscId('');
       setSelectedExternalDisc(null);
-      await loadBag();
+      await loadBag(authUser.id);
     } catch (err) {
       console.error(err);
       setError('Unexpected error adding disc to bag');
@@ -249,7 +252,7 @@ export default function BagPage() {
   };
 
   const handleRemoveFromBag = async (userDiscId: string) => {
-    if (!userDiscId) return;
+    if (!userDiscId || !authUser) return;
 
     try {
       setLoading(true);
@@ -259,7 +262,7 @@ export default function BagPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userDiscId,
-          userId: DEMO_USER_ID,
+          userId: authUser.id,
         }),
       });
       const data = await res.json();
@@ -267,7 +270,7 @@ export default function BagPage() {
         setError(data.error || 'Failed to remove disc from bag');
         return;
       }
-      await loadBag();
+      await loadBag(authUser.id);
     } catch (err) {
       console.error(err);
       setError('Unexpected error removing disc from bag');
@@ -276,10 +279,11 @@ export default function BagPage() {
     }
   };
 
+  // load bag whenever we have an authenticated user
   useEffect(() => {
-    loadBag();
-    loadRecentDiscs();
-  }, []);
+    if (!authUser) return;
+    loadBag(authUser.id);
+  }, [authUser]);
 
   const localCount = localDiscs.length;
   const externalCount = externalResults.length;
@@ -287,6 +291,23 @@ export default function BagPage() {
   const selectedLocalDisc = selectedDiscId
     ? localDiscs.find((d) => d.id === selectedDiscId) ?? null
     : null;
+
+  // Last 5 unique discs added to the bag, by created_at desc
+  const recentDiscs: UserDisc[] = (() => {
+    if (!bag.length) return [];
+    const sorted = [...bag].sort((a, b) =>
+      a.created_at < b.created_at ? 1 : -1
+    );
+    const seen = new Set<string>();
+    const unique: UserDisc[] = [];
+    for (const item of sorted) {
+      if (seen.has(item.disc_id)) continue;
+      seen.add(item.disc_id);
+      unique.push(item);
+      if (unique.length >= 5) break;
+    }
+    return unique;
+  })();
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
@@ -315,347 +336,382 @@ export default function BagPage() {
           </div>
         )}
 
-        {/* Add disc to bag */}
-        <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-4">
-          <h2 className="text-sm font-semibold">Add disc to bag</h2>
-
-          <form
-            onSubmit={handleSearch}
-            className="flex flex-col md:flex-row gap-2 md:items-end"
-          >
-            <div className="flex-1 flex flex-col gap-1 relative">
-              <label className="text-[11px] text-slate-300">
-                Search discs (brand or mold)
-              </label>
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setSearchFocused(false)}
-                placeholder="e.g. Buzzz, Destroyer, Envy..."
-                className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-
-              {/* recent discs dropdown */}
-              {searchFocused &&
-                !hasSearched &&
-                !search &&
-                recentCatalogDiscs.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border border-slate-800 bg-slate-950/95 shadow-lg">
-                    <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-slate-400">
-                      Recent discs
-                    </div>
-                    <div className="max-h-52 overflow-y-auto text-xs">
-                      {recentCatalogDiscs.map((d) => (
-                        <button
-                          key={d.id}
-                          type="button"
-                          onMouseDown={(e) => {
-                            // prevent blur from firing before click
-                            e.preventDefault();
-                            setSelectedDiscId(d.id);
-                            setSelectedExternalDisc(null);
-                            setSearch(`${d.brand} ${d.mold}`);
-                            setHasSearched(false);
-                            setLocalDiscs([d]);
-                          }}
-                          className="w-full text-left px-3 py-2 hover:bg-slate-800 border-t border-slate-800 first:border-t-0"
-                        >
-                          <div className="text-slate-100">
-                            {d.brand} {d.mold}{' '}
-                            {d.plastic ? `(${d.plastic})` : ''}
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            {d.type || 'Unknown type'} · {d.speed} /{' '}
-                            {d.glide ?? '?'} / {d.turn ?? '?'} / {d.fade ?? '?'}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={searchLoading}
-                className="rounded-md px-4 py-2 bg-slate-800 text-xs border border-slate-600 hover:bg-slate-700 disabled:opacity-50"
-              >
-                {searchLoading ? 'Searching…' : 'Search'}
-              </button>
-              {(hasSearched || search) && (
-                <button
-                  type="button"
-                  onClick={handleClearSearch}
-                  className="rounded-md px-3 py-2 bg-slate-900 text-xs border border-slate-700 hover:bg-slate-800"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-          </form>
-
-          {/* status lines */}
-          <div className="text-[11px] text-slate-400">
-            {searchLoading || externalLoading
-              ? 'Searching discs…'
-              : !hasSearched && !search
-              ? 'Type a disc name to search.'
-              : localCount > 0
-              ? `Found ${localCount} matching disc${localCount === 1 ? '' : 's'}.`
-              : externalCount > 0
-              ? `Found ${externalCount} discs you can add to your bag.`
-              : 'No discs found for that search.'}
-          </div>
-
-          {localCount > 0 && (
-            <div className="space-y-2 max-h-64 overflow-y-auto border border-slate-800 rounded-md p-2 bg-slate-950/40 mt-2">
-              {localDiscs.map((d) => (
-                <div
-                  key={d.id}
-                  className="flex items-center justify-between gap-2 py-1 border-b border-slate-800 last:border-b-0"
-                >
-                  <div className="flex flex-col">
-                    <span className="text-xs font-medium text-slate-100">
-                      {d.brand} {d.mold}{' '}
-                      {d.plastic ? `(${d.plastic})` : ''}
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      {d.type || 'Unknown type'} · {d.speed}
-                      /{d.glide ?? '?'} / {d.turn ?? '?'} / {d.fade ?? '?'} ·{' '}
-                      {d.stability || 'Unknown stability'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedDiscId(d.id);
-                      setSelectedExternalDisc(null);
-                    }}
-                    className={`text-[11px] px-2 py-1 rounded-md border ${
-                      selectedDiscId === d.id
-                        ? 'border-emerald-400 text-emerald-200 bg-emerald-900/40'
-                        : 'border-slate-600 text-slate-200 hover:bg-slate-800'
-                    }`}
-                  >
-                    {selectedDiscId === d.id ? 'Selected' : 'Select'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* api results list */}
-          {externalCount > 0 && localCount === 0 && (
-            <div className="space-y-2 max-h-64 overflow-y-auto border border-slate-800 rounded-md p-2 bg-slate-950/40 mt-2">
-              {externalResults.map((d) => (
-                <div
-                  key={d.externalId}
-                  className="flex items-center justify-between gap-2 py-1 border-b border-slate-800 last:border-b-0"
-                >
-                  <div className="flex flex-col">
-                    <span className="text-xs font-medium text-slate-100">
-                      {d.brand} {d.mold}{' '}
-                      {d.plastic ? `(${d.plastic})` : ''}
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      {d.type || 'Unknown type'} · {d.speed ?? '?'}
-                      /{d.glide ?? '?'} / {d.turn ?? '?'} / {d.fade ?? '?'} ·{' '}
-                      {d.stability || 'Unknown stability'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedExternalDisc(d);
-                      setSelectedDiscId('');
-                    }}
-                    className={`text-[11px] px-2 py-1 rounded-md border ${
-                      selectedExternalDisc?.externalId === d.externalId
-                        ? 'border-emerald-400 text-emerald-200 bg-emerald-900/40'
-                        : 'border-slate-600 text-slate-200 hover:bg-slate-800'
-                    }`}
-                  >
-                    {selectedExternalDisc?.externalId === d.externalId
-                      ? 'Selected'
-                      : 'Select'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {externalError && (
-            <div className="text-[11px] text-red-400 bg-red-950/40 border border-red-600/50 rounded-md px-3 py-2 mt-2">
-              {externalError}
-            </div>
-          )}
-
-          <form
-            onSubmit={handleAddSelectedDisc}
-            className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end mt-2"
-          >
-            <div className="md:col-span-4 text-[11px] text-slate-300">
-              {selectedLocalDisc && (
-                <span>
-                  Selected disc:{' '}
-                  <span className="font-semibold">
-                    {selectedLocalDisc.brand} {selectedLocalDisc.mold}
-                  </span>
-                </span>
-              )}
-              {selectedExternalDisc && (
-                <span>
-                  Selected disc:{' '}
-                  <span className="font-semibold">
-                    {selectedExternalDisc.brand} {selectedExternalDisc.mold}
-                  </span>
-                </span>
-              )}
-              {!selectedLocalDisc && !selectedExternalDisc && (
-                <span>
-                  Select a disc above, then optionally add nickname, wear
-                  level, and weight.
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300">
-                Nickname (optional)
-              </label>
-              <input
-                type="text"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                placeholder="e.g. Flippy Buzzz"
-                className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300">
-                Wear level (optional)
-              </label>
-              <select
-                value={wearLevel}
-                onChange={(e) => setWearLevel(e.target.value)}
-                className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="">Not set</option>
-                <option value="new">New</option>
-                <option value="seasoned">Seasoned</option>
-                <option value="beat">Beat</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300">
-                Weight in Grams (optional)
-              </label>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                value={weight}
-                onChange={(e) => setWeight(e.target.value)}
-                placeholder="e.g. 173"
-                className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={
-                loading ||
-                (!selectedLocalDisc && !selectedExternalDisc)
-              }
-              className="md:col-span-4 md:justify-self-start rounded-md px-4 py-2 bg-emerald-500 text-slate-950 text-xs font-semibold hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Add to bag
-            </button>
-          </form>
-        </section>
-
-        {/* Current bag */}
-        <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">Discs in bag</h2>
-            <button
-              onClick={loadBag}
-              disabled={loading}
-              className="text-[11px] px-2 py-1 rounded border border-slate-600 hover:bg-slate-800 disabled:opacity-50"
-            >
-              Refresh
-            </button>
-          </div>
-
-          {loading && bag.length === 0 && (
-            <p className="text-sm text-slate-400">Loading bag...</p>
-          )}
-
-          {!loading && bag.length === 0 && (
-            <p className="text-sm text-slate-500">
-              No discs in your bag yet. Add something using the search above.
+        {authLoading ? (
+          <p className="text-sm text-slate-400">Checking sign-in…</p>
+        ) : !authUser ? (
+          <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+            <h2 className="text-sm font-semibold">Sign in required</h2>
+            <p className="text-xs text-slate-300">
+              Create an account or sign in to build your bag. Each bag is tied
+              to your account.
             </p>
-          )}
+            <Link
+              href="/auth"
+              className="inline-flex items-center justify-center text-xs px-4 py-2 rounded-md bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400"
+            >
+              Go to sign in
+            </Link>
+          </section>
+        ) : (
+          <>
+            {/* Add disc to bag */}
+            <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-4">
+              <h2 className="text-sm font-semibold">Add disc to bag</h2>
 
-          {bag.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="text-left py-2 pr-3">Disc</th>
-                    <th className="text-left py-2 pr-3">Type</th>
-                    <th className="text-left py-2 pr-3">Numbers</th>
-                    <th className="text-left py-2 pr-3">Nickname</th>
-                    <th className="text-left py-2 pr-3">Wear</th>
-                    <th className="text-right py-2 pl-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bag.map((ud) => (
-                    <tr
-                      key={ud.id}
-                      className="border-b border-slate-800 last:border-b-0"
-                    >
-                      <td className="py-2 pr-3">
-                        <div className="font-medium text-slate-100">
-                          {ud.disc.brand} {ud.disc.mold}{' '}
-                          {ud.disc.plastic ? `(${ud.disc.plastic})` : ''}
+              <form
+                onSubmit={handleSearch}
+                className="flex flex-col md:flex-row gap-2 md:items-end"
+              >
+                <div className="flex-1 flex flex-col gap-1 relative">
+                  <label className="text-[11px] text-slate-300">
+                    Search discs (brand or mold)
+                  </label>
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setSearchFocused(false)}
+                    placeholder="e.g. Buzzz, Destroyer, Envy..."
+                    className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+
+                  {/* recent discs dropdown */}
+                  {searchFocused &&
+                    !hasSearched &&
+                    !search &&
+                    recentDiscs.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border border-slate-800 bg-slate-950/95 shadow-lg">
+                        <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-slate-400">
+                          Recent discs
                         </div>
-                      </td>
-                      <td className="py-2 pr-3 text-slate-300">
-                        {ud.disc.type || '—'}
-                      </td>
-                      <td className="py-2 pr-3 text-slate-300">
-                        {ud.disc.speed}/{ud.disc.glide ?? '-'} /
-                        {ud.disc.turn ?? '-'} / {ud.disc.fade ?? '-'}
-                      </td>
-                      <td className="py-2 pr-3 text-slate-200">
-                        {ud.nickname || '—'}
-                      </td>
-                      <td className="py-2 pr-3 text-slate-200">
-                        {ud.wear_level || '—'}
-                      </td>
-                      <td className="py-2 pl-3 text-right">
-                        <button
-                          onClick={() => handleRemoveFromBag(ud.id)}
-                          className="px-2 py-1 rounded border border-red-600 text-red-300 hover:bg-red-900/40 text-[11px]"
-                          disabled={loading}
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
+                        <div className="max-h-52 overflow-y-auto text-xs">
+                          {recentDiscs.map((ud) => (
+                            <button
+                              key={ud.id}
+                              type="button"
+                              onMouseDown={(e) => {
+                                // prevent blur from firing before click
+                                e.preventDefault();
+                                setSelectedDiscId(ud.disc.id);
+                                setSelectedExternalDisc(null);
+                                setSearch(
+                                  `${ud.disc.brand} ${ud.disc.mold}`
+                                );
+                                setHasSearched(false);
+                              }}
+                              className="w-full text-left px-3 py-2 hover:bg-slate-800 border-t border-slate-800 first:border-t-0"
+                            >
+                              <div className="text-slate-100">
+                                {ud.disc.brand} {ud.disc.mold}{' '}
+                                {ud.disc.plastic
+                                  ? `(${ud.disc.plastic})`
+                                  : ''}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {ud.disc.type || 'Unknown type'} ·{' '}
+                                {ud.disc.speed}/{ud.disc.glide ?? '?'} /{' '}
+                                {ud.disc.turn ?? '?'} / {ud.disc.fade ?? '?'}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={searchLoading}
+                    className="rounded-md px-4 py-2 bg-slate-800 text-xs border border-slate-600 hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    {searchLoading ? 'Searching…' : 'Search'}
+                  </button>
+                  {(hasSearched || search) && (
+                    <button
+                      type="button"
+                      onClick={handleClearSearch}
+                      className="rounded-md px-3 py-2 bg-slate-900 text-xs border border-slate-700 hover:bg-slate-800"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              {/* status lines */}
+              <div className="text-[11px] text-slate-400">
+                {searchLoading || externalLoading
+                  ? 'Searching discs…'
+                  : !hasSearched && !search
+                  ? 'Type a disc name to search.'
+                  : localCount > 0
+                  ? `Found ${localCount} matching disc${
+                      localCount === 1 ? '' : 's'
+                    }.`
+                  : externalCount > 0
+                  ? `Found ${externalCount} discs you can add to your bag.`
+                  : 'No discs found for that search.'}
+              </div>
+
+              {localCount > 0 && (
+                <div className="space-y-2 max-h-64 overflow-y-auto border border-slate-800 rounded-md p-2 bg-slate-950/40 mt-2">
+                  {localDiscs.map((d) => (
+                    <div
+                      key={d.id}
+                      className="flex items-center justify-between gap-2 py-1 border-b border-slate-800 last:border-b-0"
+                    >
+                      <div className="flex flex-col">
+                        <span className="text-xs font-medium text-slate-100">
+                          {d.brand} {d.mold}{' '}
+                          {d.plastic ? `(${d.plastic})` : ''}
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          {d.type || 'Unknown type'} · {d.speed}
+                          /{d.glide ?? '?'} / {d.turn ?? '?'} / {d.fade ?? '?'} ·{' '}
+                          {d.stability || 'Unknown stability'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedDiscId(d.id);
+                          setSelectedExternalDisc(null);
+                        }}
+                        className={`text-[11px] px-2 py-1 rounded-md border ${
+                          selectedDiscId === d.id
+                            ? 'border-emerald-400 text-emerald-200 bg-emerald-900/40'
+                            : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                        }`}
+                      >
+                        {selectedDiscId === d.id ? 'Selected' : 'Select'}
+                      </button>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+                </div>
+              )}
+
+              {/* api results list */}
+              {externalCount > 0 && localCount === 0 && (
+                <div className="space-y-2 max-h-64 overflow-y-auto border border-slate-800 rounded-md p-2 bg-slate-950/40 mt-2">
+                  {externalResults.map((d) => (
+                    <div
+                      key={d.externalId}
+                      className="flex items-center justify-between gap-2 py-1 border-b border-slate-800 last:border-b-0"
+                    >
+                      <div className="flex flex-col">
+                        <span className="text-xs font-medium text-slate-100">
+                          {d.brand} {d.mold}{' '}
+                          {d.plastic ? `(${d.plastic})` : ''}
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          {d.type || 'Unknown type'} · {d.speed ?? '?'}
+                          /{d.glide ?? '?'} / {d.turn ?? '?'} / {d.fade ?? '?'} ·{' '}
+                          {d.stability || 'Unknown stability'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedExternalDisc(d);
+                          setSelectedDiscId('');
+                        }}
+                        className={`text-[11px] px-2 py-1 rounded-md border ${
+                          selectedExternalDisc?.externalId === d.externalId
+                            ? 'border-emerald-400 text-emerald-200 bg-emerald-900/40'
+                            : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                        }`}
+                      >
+                        {selectedExternalDisc?.externalId === d.externalId
+                          ? 'Selected'
+                          : 'Select'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {externalError && (
+                <div className="text-[11px] text-red-400 bg-red-950/40 border border-red-600/50 rounded-md px-3 py-2 mt-2">
+                  {externalError}
+                </div>
+              )}
+
+              <form
+                onSubmit={handleAddSelectedDisc}
+                className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end mt-2"
+              >
+                <div className="md:col-span-4 text-[11px] text-slate-300">
+                  {selectedLocalDisc && (
+                    <span>
+                      Selected disc:{' '}
+                      <span className="font-semibold">
+                        {selectedLocalDisc.brand} {selectedLocalDisc.mold}
+                      </span>
+                    </span>
+                  )}
+                  {selectedExternalDisc && (
+                    <span>
+                      Selected disc:{' '}
+                      <span className="font-semibold">
+                        {selectedExternalDisc.brand} {selectedExternalDisc.mold}
+                      </span>
+                    </span>
+                  )}
+                  {!selectedLocalDisc && !selectedExternalDisc && (
+                    <span>
+                      Select a disc above, then optionally add nickname, wear
+                      level, and weight.
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-slate-300">
+                    Nickname (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={nickname}
+                    onChange={(e) => setNickname(e.target.value)}
+                    placeholder="e.g. Flippy Buzzz"
+                    className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-slate-300">
+                    Wear level (optional)
+                  </label>
+                  <select
+                    value={wearLevel}
+                    onChange={(e) => setWearLevel(e.target.value)}
+                    className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="">Not set</option>
+                    <option value="new">New</option>
+                    <option value="seasoned">Seasoned</option>
+                    <option value="beat">Beat</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-slate-300">
+                    Weight in grams (optional)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    placeholder="e.g. 173"
+                    className="rounded-md px-3 py-2 bg-slate-950 border border-slate-700 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={
+                    loading ||
+                    (!selectedLocalDisc && !selectedExternalDisc)
+                  }
+                  className="md:col-span-4 md:justify-self-start rounded-md px-4 py-2 bg-emerald-500 text-slate-950 text-xs font-semibold hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add to bag
+                </button>
+              </form>
+            </section>
+
+            {/* Current bag */}
+            <section className="bg-slate-900 border border-slate-800 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold">Discs in bag</h2>
+                <button
+                  onClick={() => authUser && loadBag(authUser.id)}
+                  disabled={loading}
+                  className="text-[11px] px-2 py-1 rounded border border-slate-600 hover:bg-slate-800 disabled:opacity-50"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {loading && bag.length === 0 && (
+                <p className="text-sm text-slate-400">Loading bag...</p>
+              )}
+
+              {!loading && bag.length === 0 && (
+                <p className="text-sm text-slate-500">
+                  No discs in your bag yet. Add something using the search
+                  above.
+                </p>
+              )}
+
+              {bag.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400">
+                        <th className="text-left py-2 pr-3">Disc</th>
+                        <th className="text-left py-2 pr-3">Type</th>
+                        <th className="text-left py-2 pr-3">Numbers</th>
+                        <th className="text-left py-2 pr-3">Nickname</th>
+                        <th className="text-left py-2 pr-3">Wear</th>
+                        <th className="text-right py-2 pl-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bag.map((ud) => (
+                        <tr
+                          key={ud.id}
+                          className="border-b border-slate-800 last:border-b-0"
+                        >
+                          <td className="py-2 pr-3">
+                            <div className="font-medium text-slate-100">
+                              {ud.disc.brand} {ud.disc.mold}{' '}
+                              {ud.disc.plastic
+                                ? `(${ud.disc.plastic})`
+                                : ''}
+                            </div>
+                            {typeof ud.weight_grams === 'number' &&
+                              !Number.isNaN(ud.weight_grams) && (
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  {ud.weight_grams} g
+                                </div>
+                              )}
+                          </td>
+                          <td className="py-2 pr-3 text-slate-300">
+                            {ud.disc.type || '—'}
+                          </td>
+                          <td className="py-2 pr-3 text-slate-300">
+                            {ud.disc.speed}/{ud.disc.glide ?? '-'} /{' '}
+                            {ud.disc.turn ?? '-'} / {ud.disc.fade ?? '-'}
+                          </td>
+                          <td className="py-2 pr-3 text-slate-200">
+                            {ud.nickname || '—'}
+                          </td>
+                          <td className="py-2 pr-3 text-slate-200">
+                            {ud.wear_level || '—'}
+                          </td>
+                          <td className="py-2 pl-3 text-right">
+                            <button
+                              onClick={() => handleRemoveFromBag(ud.id)}
+                              className="px-2 py-1 rounded border border-red-600 text-red-300 hover:bg-red-900/40 text-[11px]"
+                              disabled={loading}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </>
+        )}
       </div>
     </main>
   );
