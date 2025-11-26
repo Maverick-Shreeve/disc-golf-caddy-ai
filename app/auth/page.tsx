@@ -71,6 +71,29 @@ export default function AuthPage() {
     }
   };
 
+  // google sign-in handler
+  const handleGoogleSignIn = async () => {
+    setSubmitting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const { error } = await supabaseBrowser.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/bag`,
+        },
+      });
+      if (error) {
+        setError(error.message || 'Google sign-in failed');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Unexpected error during Google sign-in');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSignOut = async () => {
     setSubmitting(true);
     setError(null);
@@ -87,34 +110,6 @@ export default function AuthPage() {
       console.error(err);
       setError('Unexpected error signing out');
     } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setSubmitting(true);
-    setError(null);
-    setMessage(null);
-
-    try {
-      const { error } = await supabaseBrowser.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          // After Google auth, send the user back here (or to /bag, /, etc.)
-          redirectTo: `${window.location.origin}/bag`,
-        },
-      });
-
-      if (error) {
-        setError(error.message || 'Google sign-in failed');
-        setSubmitting(false);
-        return;
-      }
-
-      // Supabase will redirect, so we usually don't need to do anything else here.
-    } catch (err) {
-      console.error(err);
-      setError('Unexpected error during Google sign-in');
       setSubmitting(false);
     }
   };
@@ -184,33 +179,24 @@ export default function AuthPage() {
               </button>
             </div>
 
-            {/* OAuth section */}
-            <div className="space-y-3">
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                disabled={submitting}
-                className="w-full rounded-md px-4 py-2 bg-slate-100 text-slate-900 text-xs font-semibold hover:bg-white disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {/* simple G icon substitute */}
-                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[10px] text-slate-900">
-                  G
-                </span>
-                <span>
-                  {mode === 'signin'
-                    ? 'Continue with Google'
-                    : 'Sign up with Google'}
-                </span>
-              </button>
+            {/* google sign-in button */}
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={submitting}
+              className="w-full flex items-center justify-center gap-2 rounded-md px-4 py-2 bg-slate-100 text-slate-900 text-xs font-semibold hover:bg-white disabled:opacity-50"
+            >
+              <span>Continue with Google</span>
+            </button>
 
-              <div className="flex items-center gap-2 text-[10px] text-slate-500">
-                <span className="h-px flex-1 bg-slate-800" />
-                <span>or use email</span>
-                <span className="h-px flex-1 bg-slate-800" />
-              </div>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-px bg-slate-700" />
+              <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+                or continue with email
+              </span>
+              <div className="flex-1 h-px bg-slate-700" />
             </div>
 
-            {/* Email/password form */}
             <form onSubmit={handleAuth} className="space-y-3">
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-slate-300">
