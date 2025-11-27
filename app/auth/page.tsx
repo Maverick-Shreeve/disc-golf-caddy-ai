@@ -9,7 +9,6 @@ export default function AuthPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -21,6 +20,7 @@ export default function AuthPage() {
     const loadUser = async () => {
       setLoadingUser(true);
       const { data, error } = await supabaseBrowser.auth.getUser();
+      console.log('auth.getUser result:', { data, error }); // debug for Google redirect
       if (error) {
         console.error('Error loading user', error);
       }
@@ -31,7 +31,10 @@ export default function AuthPage() {
     loadUser();
   }, []);
 
-  const handleAuth = async (e: React.FormEvent) => {
+  const handleAuth = async (
+    e: React.SyntheticEvent,
+    mode: 'signin' | 'signup'
+  ) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
@@ -47,8 +50,7 @@ export default function AuthPage() {
           setError(error.message || 'Sign up failed');
           return;
         }
-        setMessage('Account created. You can now sign in.');
-        setMode('signin');
+        setMessage('Account created. You can now sign in with your email and password.');
       } else {
         const { data, error } = await supabaseBrowser.auth.signInWithPassword({
           email,
@@ -71,7 +73,7 @@ export default function AuthPage() {
     }
   };
 
-  // google sign-in handler
+  // Google sign-in handler
   const handleGoogleSignIn = async () => {
     setSubmitting(true);
     setError(null);
@@ -80,6 +82,7 @@ export default function AuthPage() {
       const { error } = await supabaseBrowser.auth.signInWithOAuth({
         provider: 'google',
         options: {
+          // after Google completes, Supabase will send you back here
           redirectTo: `${window.location.origin}/bag`,
         },
       });
@@ -117,8 +120,11 @@ export default function AuthPage() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
       <div className="max-w-md mx-auto px-4 py-8 space-y-6">
-        <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Account</h1>
+        {/* top header / mini-navbar */}
+        <header className="flex items-center justify-between mb-2">
+          <Link href="/" className="text-sm font-semibold tracking-tight">
+            Disc Caddy
+          </Link>
           <Link
             href="/"
             className="text-xs px-3 py-1 rounded border border-slate-700 hover:bg-slate-800"
@@ -162,24 +168,16 @@ export default function AuthPage() {
           </section>
         ) : (
           <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="space-y-1">
               <h2 className="text-sm font-semibold">
-                {mode === 'signin' ? 'Sign in' : 'Create an account'}
+                Sign in or create an account
               </h2>
-              <button
-                type="button"
-                onClick={() =>
-                  setMode((prev) => (prev === 'signin' ? 'signup' : 'signin'))
-                }
-                className="text-[11px] underline text-slate-400 hover:text-slate-200"
-              >
-                {mode === 'signin'
-                  ? 'Need an account? Sign up'
-                  : 'Already have an account? Sign in'}
-              </button>
+              <p className="text-[11px] text-slate-400">
+                Use Google for one-tap sign in, or email and password.
+              </p>
             </div>
 
-            {/* google sign-in button */}
+            {/* Google sign-in button */}
             <button
               type="button"
               onClick={handleGoogleSignIn}
@@ -192,12 +190,16 @@ export default function AuthPage() {
             <div className="flex items-center gap-2">
               <div className="flex-1 h-px bg-slate-700" />
               <span className="text-[10px] text-slate-500 uppercase tracking-wide">
-                or continue with email
+                or use email
               </span>
               <div className="flex-1 h-px bg-slate-700" />
             </div>
 
-            <form onSubmit={handleAuth} className="space-y-3">
+            {/* Email/password form (no mode toggle, two explicit actions) */}
+            <form
+              className="space-y-3"
+              onSubmit={(e) => e.preventDefault()}
+            >
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-slate-300">
                   Email
@@ -224,19 +226,24 @@ export default function AuthPage() {
                 />
               </div>
 
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full rounded-md px-4 py-2 bg-emerald-500 text-slate-950 text-xs font-semibold hover:bg-emerald-400 disabled:opacity-50"
-              >
-                {submitting
-                  ? mode === 'signin'
-                    ? 'Signing in…'
-                    : 'Creating account…'
-                  : mode === 'signin'
-                  ? 'Sign in'
-                  : 'Sign up'}
-              </button>
+              <div className="flex flex-col gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={(e) => handleAuth(e, 'signin')}
+                  disabled={submitting}
+                  className="w-full rounded-md px-4 py-2 bg-emerald-500 text-slate-950 text-xs font-semibold hover:bg-emerald-400 disabled:opacity-50"
+                >
+                  Sign in with email
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleAuth(e, 'signup')}
+                  disabled={submitting}
+                  className="w-full rounded-md px-4 py-2 bg-slate-800 text-slate-100 text-xs font-semibold border border-slate-600 hover:bg-slate-700 disabled:opacity-50"
+                >
+                  Create account with email
+                </button>
+              </div>
             </form>
 
             {message && (
